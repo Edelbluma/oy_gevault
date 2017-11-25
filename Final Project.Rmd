@@ -1,0 +1,397 @@
+---
+title       : EDLD 610 Final Project
+subtitle    : Inferring Social Stigma from Scales
+author      : Nate Warren, Kivalina Grove, and Andrew Edelblum
+job         : 
+framework   : io2012        # {io2012, html5slides, shower, dzslides, ...}
+highlighter : prettify  # {highlight.js, prettify, highlight}
+hitheme     : zenburn      # 
+widgets     : [mathjax]           # {mathjax, quiz, bootstrap}
+mode        : selfcontained # {standalone, draft}
+knit        : slidify::knit2slides
+--- 
+<style>
+.title-slide {
+  background-color: #FFFFFF; /* #(255,255,255); ; #CA9F9D*/
+}
+
+strong {
+  font-weight: bold;
+}
+
+.title-slide {
+  background-color: #FFFFFF; /* #EDE0CF; ; #CA9F9D*/
+}
+</style>
+
+```{r loadImport, echo = FALSE, message=FALSE, warning=FALSE, error=FALSE, include = FALSE}
+library(tidyverse)
+library(rio)
+library(janitor)
+library(knitr)
+
+all_content <- readLines("scales_reading_three_11_2017.csv")
+skip_lines <- all_content[-2]
+survey <- read.csv(textConnection(skip_lines), header = TRUE, stringsAsFactors = TRUE) %>% 
+  clean_names()
+
+#names(survey)
+
+df <- survey %>% 
+  select(cond, dvtimer_page_submit, check1, minutes_norm, iv_lo_b, iv_hi_b, everything()) %>% 
+  rename(dv_timer = dvtimer_page_submit)
+
+#head(df)
+
+df_a <- df %>% 
+  filter(check1 == 1 &
+         problems == 1 &
+         duplicated(ipaddress) == FALSE ) %>% 
+  mutate(dv_timer = as.numeric(dv_timer),
+         minutes_norm = as.numeric(minutes_norm)) %>% 
+  rename(dv_norm_minutes = minutes_norm)
+
+
+df_test <- df_a %>% 
+  gather(item, score, starts_with("sii")) %>% 
+  separate(item, c("disc", "question", "type"), sep = "_") %>% 
+  select(-disc) %>%
+  group_by(responseid, type) %>% 
+  summarize(score_total = sum(score)) %>% 
+  spread(type, score_total) %>% 
+  mutate(sii_norm = norm/8, 
+         sii_info = info/4)
+
+colnames(df_test)[2:3] <- c("total_info", "total_norm")
+
+df1 <- left_join(df_a, df_test)
+#names(df1)
+
+df1 <- df1 %>% 
+  gather(trash, response, iv_lo_b:iv_hi_b) %>% 
+  filter(response != "") %>% 
+  select(-trash, -c(startdate:recordeddate), -c(recipientlastname:laptop1), -c(dvtimer_first_click:spending_na_1))
+
+#print(df2$response)
+#janitor::remove_empty_rows(df2$response)
+
+df1$need_consist_total <- rowSums(df1[ , 31:48]) 
+df1$sdr_total <- rowSums(df1[ , 17:27])
+df1$fne_total <- rowSums(df1[ , 28:30])
+
+df1$need_consist_mean <- rowMeans(df1[ , 31:48]) 
+df1$sdr_mean <- rowMeans(df1[ , 17:27])
+df1$fne_mean <- rowMeans(df1[ , 28:30])
+
+df1 <- df1 %>% 
+  select(cond, dv_timer, dv_norm_minutes, sii_norm:fne_mean, u_health_1:certain_1, peculiarity:age, response, everything())
+
+df1 %>% 
+  group_by(cond) %>%
+  summarise(mean_time = mean(dv_timer), 
+            sd_time = sd(dv_timer),
+            mean_norm = mean(dv_norm_minutes),
+            sd_norm = sd(dv_norm_minutes),
+            mean_sii_norm = mean(sii_norm)) %>% 
+  knitr::kable()
+
+
+df_sum <- df1 %>% 
+  select(dv_timer, dv_norm_minutes, cond) %>% 
+  group_by(cond) %>%  
+  summarise_all(.funs = c(mean = "mean", sd = "sd")) 
+df_sum
+
+library(stats)
+
+model_time <- lm(df1$dv_timer ~ df1$cond)
+summary(model_time)
+
+
+df1_p <-  df1 %>% 
+  filter(dv_timer > 20)
+summary(model_time_hack <- lm(dv_timer ~ cond, df1_p))
+
+ggplot(df1, aes(cond, dv_timer)) + 
+  geom_violin()
+
+ggplot(df1, aes(cond, dv_timer)) + 
+  geom_boxplot()
+
+summary(model_norm <- lm(df1$dv_norm_minutes ~ df1$cond))
+
+ggplot(df1, aes(cond, dv_norm_minutes)) + 
+  geom_violin()
+
+ggplot(df1, aes(cond, dv_norm_minutes)) + 
+  geom_boxplot()
+
+big_model_time <- lm(dv_timer ~ cond + sdr_mean + need_consist_mean + fne_mean + sii_norm + sii_info, data = df1)
+summary(big_model_time)
+
+big_model_norm <- lm(dv_norm_minutes ~ cond + sdr_mean + need_consist_mean + fne_mean + sii_norm + sii_info, data = df1)
+summary(big_model_norm)
+
+summary(model_dv_timer_sii_sdr <- lm(dv_timer ~ sii_norm + sdr_mean + cond, data = df1))
+
+ggplot(df1, aes(sii_norm, dv_timer, color = cond)) +
+  geom_jitter(width = 0.5, height = 0.5)+
+  geom_smooth() 
+           
+ggplot(df1, aes(sdr_mean, dv_timer, color = cond)) +
+  geom_jitter(width = 0.5, height = 0.5)+
+  geom_smooth()
+
+library(foreign)
+#install.packages('mediation')
+library(mediation)
+#install.packages('checkmate')
+
+model.a <- lm(data=df1, dv_norm_minutes ~ cond)
+summary(model.a)
+
+model.c <- lm(data=df1, dv_timer ~ cond)
+summary(model.c)
+
+model.cb <- lm(data=df1, dv_timer ~ dv_norm_minutes + cond)
+summary(model.cb)
+
+attach(df1)
+
+# This is the syntax for the "mediate" function within the "mediation" package
+model.boot <- mediate(model.m = model.a, model.y = model.cb, sims = 10, #change sims to a larger number for real analysis...either way n/s
+                     boot = TRUE, treat = "cond", mediator = "dv_norm_minutes",
+                     outcome = "dv_timer")
+
+summary(model.boot)
+#ACME = average causal mediation effect = a*b = indirect
+#ADE = average direct effect = c' (if non zero, partial mediation)
+#Total effect = c
+#Prop. mediated = -0.42 = proportion mediated = a*b/c = how much of the full effect is a mediated effect - 42% of the path is explained by mediation; partial mediation)
+plot(model.boot)
+
+#can we figure out how different levels of the sii_norm (+/- 1sd) differ?
+
+model_norm_sii <- lm(dv_norm_minutes ~ sii_norm + cond, data = df1)
+summary(model_norm_sii)
+
+model_norm_sii_interaction <- lm(dv_norm_minutes ~ sii_norm*cond, data = df1)
+summary(model_norm_sii_interaction)
+
+
+
+pretty_plot <- ggplot(df1, aes(sii_norm, dv_norm_minutes, color = cond))+
+  geom_jitter(width = .8, height = .5, alpha = .5)+
+  geom_smooth()+
+  scale_color_brewer(palette = "Set2",
+                       guide = guide_legend(title = "Condition")) +
+  labs(x = "Susceptibility to Normative Interpersonal Influence",
+         y = "Avg. minutes normal person reads",
+         title = "Scale format influences normative beliefs",
+         subtitle = "Especially for people susceptible to interpersonal influence")
+```
+
+## Our Journey through R
+
+**Nate**
+- Learned stats in R last year, but never learned R
+- Feeling much better about it now that I can read in data files & manipulate them
+- Recent master of Qualtrics pre-tidying
+
+**Kivalina**
+- "Learned" R for a statistics class in undergrad
+- Retained absolutely nothing
+- Actually learning now; know enough to actually search for problems with code
+
+**Andrew**
+- Absolutely zero coding experience prior to R
+- Tried to prep for this course last summer... failed
+- Feeling better about R every week, slowly becoming more intuitive
+
+---
+
+## Challenges Faced Along the Way
+
+- qualtRics package
+- Importing data and preserving data types
+- Tidying data in an elegant way
+- Working collaboratively on an .rmd file
+  - Sending data file back and forth
+- Dealing with the pesky lime green default slide background
+
+--- 
+
+## Victories and Things to Celebrate
+
+- Using R to analyze real data!
+- Successful clean-up of scale variables
+- Pretty data visualizations
+- Creating a `slidify` presentation
+- Feeling reasonably confident in our ability to use R for future projects
+
+---
+
+## Challenges We Are Still Facing
+
+- Coding efficiency
+  - How to say as much as possible with as little code as possible
+  - Faster diagnosis of coding issues
+- Collaborative coding
+  - Sending code back and forth can be inefficient
+  - Learned that it's possible to lose code in the process if you're not careful
+- Working with `slidify` 
+  - Custom animations
+  - Coding with C for additional aesthetics
+
+---
+
+## Hypotheses and Model
+**H1**: Scales with a higher endpoint and midpoint will cause people to infer that the normal behavior is higher than scales with a lower endpoint and midpoint. 
+
+**H2**: Scales with a higher endpoint and midpoint will cause people to perform a behavior more.  
+
+**H3**: Changes in behavior will be mediated by normative beliefs.  
+
+### Basic Model
+
+Scale format $\rightarrow$ Normative beliefs $\rightarrow$ Behaviors
+
+--- 
+
+## Design
+
+- Predictor:
+  - IV: **Scale** (high vs. low)
+
+- Outcomes:
+  - DV 1: **Reading time** (i.e., They read an article; we time them)
+  - DV 2: **Normative beliefs** (i.e., What is a normal amount of time to spend reading an article?)
+
+--- &twocol
+
+## Scale Conditions
+
+When you read health articles, how much time do you spend **reading and thinking about** each article (low bucket vs. high bucket)?
+
+*** =left
+### Low Bucket
+- 0 - 1 minutes
+- 1 - 2 minutes
+- 2 - 3 minutes
+- 3 - 4 minutes
+- 4 - 5 minutes
+- 5 - 6 minutes
+- 6 or more minutes
+
+*** =right
+### High Bucket
+- 0 - 5 minutes
+- 5 - 10 minutes
+- 10 - 15 minutes
+- 15 - 20 minutes
+- 20 - 25 minutes
+- 25 - 30 minutes
+- 30 or more minutes
+
+--- 
+
+## Summary Statistics
+
+```{r summary, echo = FALSE}
+df1_table <- df1 %>% 
+  mutate(cond = recode(df1$cond, "lo_bucket" = "Low", "hi_bucket" = "High"))
+
+df1_table %>% 
+  group_by(cond) %>%
+  summarise(mean_time = mean(dv_timer), 
+            sd_time = sd(dv_timer),
+            mean_norm = mean(dv_norm_minutes),
+            sd_norm = sd(dv_norm_minutes)) %>% 
+  knitr::kable(col.names = c("Condition", "Time Mean", "Time SD", "Norm Mean",
+                             "Norm SD"),
+               digits = 2, 
+               caption = "Table 1: Summary Data")
+```
+
+- More time taken to read the article in the high scale condition than the low scale condition
+- More time estimated to read health-related articles in the high scale condition than the low scale condition
+
+--- &twocol
+
+## Does scale format predict normative beliefs? 
+
+*** =left
+```{r plot1, echo = FALSE}
+ggplot(df1, aes(cond, dv_norm_minutes)) + 
+  geom_violin(fill = "lightblue", color = "darkgrey", alpha = .8) +
+  geom_point() +
+  geom_jitter(width = 0.2, height = 0) +
+  theme_bw() +
+  labs(x = "Condition", y = "Average Minutes",
+       title = "Percieved Normal Reading Time for an Average Person") +
+  scale_x_discrete(labels = c("High", "Low"))
+```
+
+*** =right
+- Scales $\rightarrow$ Norms **(YES!)** 
+
+--- &twocol
+
+## Does scale format predict reading time?
+
+*** =left
+```{r boxViolinPlot, echo = FALSE}
+ggplot(df1, aes(cond, dv_timer)) + 
+  geom_violin(fill = "forestgreen", color = "darkgrey", alpha = .4) +
+  geom_point() +
+  geom_jitter(width = 0.2, height = 0) +
+  theme_bw() +
+  labs(x = "Condition", y = "Time Spent Reading Article in Seconds",
+       title = "Article Reading Time by Condition") +
+  scale_x_discrete(labels = c("High", "Low"))
+```
+
+*** =right
+- Scales $\rightarrow$ Reading time **(N/S)**
+- More variance in the high bucket condition
+
+--- &twocol
+
+## Does scale format influence normative beliefs?
+
+*** =left
+```{r nice_plot, echo = FALSE, message = FALSE}
+ggplot(df1, aes(sii_norm, dv_norm_minutes, color = cond)) +
+  geom_jitter(width = .8, height = .5, alpha = .8) +
+  geom_smooth() +
+  scale_color_brewer(palette = "Set2",
+                       guide = guide_legend(title = "Condition:"), labels = c("High", "Low")) +
+  labs(x = "Susceptibility to Normative Interpersonal Influence",
+         y = "Average Minutes",
+         title = "Scale Format Influences Normative Beliefs",
+         subtitle = "Especially for people susceptible to interpersonal influence") +
+  theme_bw()
+```
+
+
+*** =right
+- At low SII, little difference in norm DV 
+- At high SII, big difference
+- Including the interaction in the model eliminates the main effect of condition and the interaction is marginally significant (*p* = 0.06) 
+
+---
+
+## Next R Hurdle to Tackle
+- For Kivalina and Andrew
+  - Using R to analyze data for first-year projects
+- Using `slidify` and `shiny` together to create interactive presentations
+- Getting Daniel to teach the next class in the R sequence ;)
+
+---
+
+## Thank you! Any questions?
+
+- Oh, and best of luck in all our future R endeavors
+
+![errors](errors.jpg)
+
